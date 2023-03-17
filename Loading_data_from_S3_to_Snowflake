@@ -1,0 +1,158 @@
+-- Snowflake queries to load data from AWS S3
+/*
+Steps:
+1. Set context: Create db/schema/wh
+2. Create file formats (csv/json)
+3. Create bucket in S3, load the files
+4. Make bucket public
+5. Create a new role in AWS with S3 full access as the policy
+6. Set the account id to default aws account id to begin with
+7. Select Require external ID option and pass a dummy value of 0000 
+8. Select AmazonS3FullAccess in the policy
+9. Name the role as "snowflake_access" and save it. Copy the IAM role ARN
+10. In snowflake, change the role to ACCOUNTADMIN
+11. Create storage integration, using the IAM role ARN for STORAGE_AWS_ROLE_ARN
+12. describe the storage integration created
+13. Select STORAGE_AWS_EXTERNAL_ID and STORAGE_AWS_IAM_USER_ARN property values
+14. Back in AWS IAM, edit the role "snowflake_access", edit Trust Relationship.
+15. In sts.ExternalID, replace the dummy 0000 value with the STORAGE_AWS_EXTERNAL_ID property value.
+16. Update the Principal AWS value with STORAGE_AWS_IAM_USER_ARN property value and save it.
+17. Create a STAGE "aws_stage", using url = "s3_bucket_created" and csv file format created above.
+18. list the stage: list@aws_stage
+19. Check the data in the stage file without loading into the target table
+        select t.$1, t.$2, t.$3, t.$4, t.$5
+          from @aws_stage (file_format =>'mycsvformat') t;
+20. Create the Ecternal Table and load the data from the stage
+
+create or replace external table customer_csv_et 
+(
+    cust_id integer as (value: c1:: integer),
+    first_name varchar as (value: c2:: varchar),
+    last_name varchar as (value: c3:: varchar),
+    fav_app varchar as (value: c4:: varchar),
+    fav_color varchar as (value: c5:: varchar)
+)
+with location = @aws_stage
+auto_refresh = false
+file_format = (format_name = mycsvformat);
+
+21. Verify the data loaded into the external table: select * from customer_csv_et;
+*/
+
+use role sysadmin;
+create database test_db;
+use database test_db;
+create schema ext_data_load;
+use schema ext_data_load;
+
+-- create snowflake integration
+
+USE ROLE ACCOUNTADMIN;
+GRANT USAGE ON INTEGRATION MY_INT TO ROLE SYSADMIN;
+
+-- create the store int creation with account admin role
+
+CREATE OR REPLACE STORAGE INTEGRATION s3_int
+  TYPE = EXTERNAL_STAGE
+  STORAGE_PROVIDER = 'S3'
+  STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::840172359423:role/snowflake_acess2'
+  ENABLED = TRUE
+  STORAGE_ALLOWED_LOCATIONS = ('s3://sf-data-load-demo');
+  
+desc integration s3_int;
+
+-- create a csv file format
+CREATE OR REPLACE FILE FORMAT mycsvformat
+   TYPE = 'CSV'
+   FIELD_DELIMITER = '|'
+   SKIP_HEADER = 1;
+
+-- create json file format
+CREATE OR REPLACE FILE FORMAT myjsonformat
+  TYPE = 'JSON'
+  STRIP_OUTER_ARRAY = TRUE;
+  
+ 
+-- create an external stage with s3
+  create or replace stage aws_stage
+  url = 's3://sf-data-load-demo/customer/csv/'
+  storage_integration = s3_int
+  file_format = mycsvformat
+  comment = 'this is customer csv data';
+
+desc stage  aws_stage ;
+
+list @aws_stage;
+
+/*
+
+-- create stage for csv and json data files
+CREATE OR REPLACE STAGE my_csv_stage
+  FILE_FORMAT = mycsvformat
+  URL = 's3://snowflake-docs';
+
+  -- stage for json data file
+  CREATE OR REPLACE STAGE my_json_stage
+  FILE_FORMAT = myjsonformat
+  URL = 's3://snowflake-docs';
+
+-- describe stage 
+desc stage my_csv_stage;
+-- list all the files in the stage
+
+list @my_csv_stage;
+
+*/
+
+-- id|first_name|last_name|Favourite App|Favourite Colour
+-- Check the data in the stage before loading the data into the external table
+select t.$1, t.$2, t.$3, t.$4, t.$5
+from @aws_stage (file_format =>'mycsvformat') t; 
+  
+-- create external table using external stage
+
+create or replace external table customer_csv_et (
+cust_id integer as (value: c1:: integer),
+first_name varchar as (value: c2:: varchar),
+last_name varchar as (value: c3:: varchar),
+fav_app varchar as (value: c4:: varchar),
+fav_color varchar as (value: c5:: varchar)
+)
+with location = @aws_stage
+auto_refresh = false
+file_format = (format_name = mycsvformat);
+
+
+select count(*) from customer_csv_et;
+
+-- If we are not aware of the data structure of the source file, create a table with one column, 
+-- the $value column on the external table will let us know the data structure
+
+create or replace external table dummy (col1 varchar as (value: c1::varchar))
+with location = @aws_stage
+auto_refresh = false
+file_format = (format_name = mycsvformat);
+
+select * from dummy;
+
+drop table dummy;
+
+/*
+create or replace external table customer_csv_et2 (
+cust_id integer as (value: c1:: integer),
+first_name varchar as (value: c2:: varchar),
+last_name varchar as (value: c3:: varchar),
+fav_app varchar as (value: c4:: varchar),
+fav_color varchar as (value: c5:: varchar)
+)
+with location = @aws_stage
+auto_refresh = false
+file_format = (format_name = mycsvformat);
+
+-- Not working. Need to check
+
+COPY INTO customer_csv_et2
+  FROM @aws_stage/customer/csv/customer3.csv
+  ON_ERROR = 'skip_file';
+
+*/
