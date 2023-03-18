@@ -137,22 +137,26 @@ select * from dummy;
 
 drop table dummy;
 
-/*
-create or replace external table customer_csv_et2 (
-cust_id integer as (value: c1:: integer),
-first_name varchar as (value: c2:: varchar),
-last_name varchar as (value: c3:: varchar),
-fav_app varchar as (value: c4:: varchar),
-fav_color varchar as (value: c5:: varchar)
-)
-with location = @aws_stage
-auto_refresh = false
-file_format = (format_name = mycsvformat);
-
--- Not working. Need to check
+create or replace table customer_csv_et2
+(
+    cust_id integer,
+    first_name varchar,
+    last_name varchar,
+    fav_app varchar,
+    fav_color varchar
+);
 
 COPY INTO customer_csv_et2
-  FROM @aws_stage/customer/csv/customer3.csv
+  FROM @aws_stage
   ON_ERROR = 'skip_file';
 
+  select * from customer_csv_et2 limit 20;
+  
+  /*
+   -- OR
+   copy into test_db.ext_data_load.customer_csv_et2 (cust_id, first_name,last_name,fav_app, fav_color)
+from (
+select t.$1, t.$2, t.$3, t.$4, t.$5
+  from @test_db.ext_data_load.aws_stage (file_format =>'mycsvformat') t --limit 10
+);
 */
